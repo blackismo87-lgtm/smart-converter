@@ -1,15 +1,50 @@
 "use client";
 
-import { useState } from 'react';
-import { Upload, Video, Shield, Zap, CheckCircle2, ChevronDown } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Upload, Video, Shield, Zap, CheckCircle2, ChevronDown, Loader2 } from 'lucide-react';
 import { insforge } from '@/lib/insforge';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 export default function VideoCompressor() {
   const [isDragging, setIsDragging] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [processingFiles, setProcessingFiles] = useState<{file: File, progress: number, done: boolean}[]>([]);
+  const [processingFiles, setProcessingFiles] = useState<{file: File, compressedFile?: File, progress: number, done: boolean}[]>([]);
+  
+  const ffmpegRef = useRef<FFmpeg | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [loadingFfmpeg, setLoadingFfmpeg] = useState(false);
+
+  const loadFfmpeg = async () => {
+    if (loaded || loadingFfmpeg) return;
+    setLoadingFfmpeg(true);
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    
+    if (!ffmpegRef.current) {
+      ffmpegRef.current = new FFmpeg();
+    }
+    const ffmpeg = ffmpegRef.current;
+    
+    try {
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+      setLoaded(true);
+    } catch (err) {
+      console.error("FFmpeg load failed", err);
+    } finally {
+      setLoadingFfmpeg(false);
+    }
+  };
+
+  useEffect(() => {
+    // Optionally pre-load ffmpeg when component mounts
+    loadFfmpeg();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDownload = (file: File) => {
     const url = URL.createObjectURL(file);
@@ -22,44 +57,78 @@ export default function VideoCompressor() {
     URL.revokeObjectURL(url);
   };
 
-  const handleFiles = (newFiles: FileList | null) => {
+  const handleFiles = async (newFiles: FileList | null) => {
     if (!newFiles) return;
     
+    if (!loaded) await loadFfmpeg();
+
     const filesArray = Array.from(newFiles);
     setFiles((prev: File[]) => [...prev, ...filesArray]);
 
     const newEntries = filesArray.map(f => ({ file: f, progress: 0, done: false }));
     setProcessingFiles((prev) => [...prev, ...newEntries]);
 
-    newEntries.forEach((entry, index) => {
-      let currentProgress = 0;
-      const interval = setInterval(() => {
-        currentProgress += Math.floor(Math.random() * 8) + 2; // Videos are slower
-        if (currentProgress >= 100) {
-          currentProgress = 100;
-          clearInterval(interval);
-          
-          setProcessingFiles(prev => prev.map(p => 
-            p.file === entry.file ? { ...p, progress: 100, done: true } : p
-          ));
+    for (const entry of newEntries) {
+      const ffmpeg = ffmpegRef.current;
+      if (!ffmpeg) {
+        console.error("FFmpeg instance is null.");
+        continue;
+      }
+      
+      if (!loaded && !ffmpeg.loaded) {
+        console.error("FFmpeg is not loaded.");
+        setProcessingFiles(prev => prev.map(p => 
+          p.file === entry.file ? { ...p, progress: 100, done: true } : p
+        ));
+        continue;
+      }
 
-          // Log to InsForge
-          insforge.database.from('processed_files').insert({
-            file_name: entry.file.name,
-            original_size: entry.file.size,
-            compressed_size: Math.floor(entry.file.size * 0.4),
-            file_type: 'video',
-            status: 'completed'
-          }).then(({ error }) => {
-            if (error) console.error('Error logging file:', error);
-          });
-        } else {
-          setProcessingFiles(prev => prev.map(p => 
-            p.file === entry.file ? { ...p, progress: currentProgress } : p
-          ));
-        }
-      }, 500 + Math.random() * 500);
-    });
+      ffmpeg.on('progress', ({ progress, time }) => {
+        // progress goes from 0 to 1
+        setProcessingFiles(prev => prev.map(p => 
+          p.file === entry.file ? { ...p, progress: Math.max(0, Math.min(100, Math.round(progress * 100))) } : p
+        ));
+      });
+
+      try {
+        const safeName = entry.file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+        const inputName = `input_${safeName}`;
+        const outputName = `output_${safeName}.mp4`;
+        
+        await ffmpeg.writeFile(inputName, await fetchFile(entry.file));
+        
+        // Fast compression: libx264, preset ultrafast, crf 28
+        await ffmpeg.exec(['-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', outputName]);
+        
+        const data = await ffmpeg.readFile(outputName);
+        const compressedBlob = new Blob([data as any], { type: 'video/mp4' });
+        const compressedFile = new File([compressedBlob], `compressed-${entry.file.name}.mp4`, { type: 'video/mp4' });
+        
+        setProcessingFiles(prev => prev.map(p => 
+          p.file === entry.file ? { ...p, progress: 100, done: true, compressedFile } : p
+        ));
+
+        // Log to InsForge
+        insforge.database.from('processed_files').insert({
+          file_name: entry.file.name,
+          original_size: entry.file.size,
+          compressed_size: compressedFile.size,
+          file_type: 'video',
+          status: 'completed'
+        }).then(({ error }) => {
+          if (error) console.error('Error logging file:', error);
+        });
+        
+        // Cleanup memory
+        await ffmpeg.deleteFile(inputName);
+        await ffmpeg.deleteFile(outputName);
+      } catch (err) {
+        console.error("Compression Error:", err);
+        setProcessingFiles(prev => prev.map(p => 
+          p.file === entry.file ? { ...p, progress: 100, done: true } : p
+        ));
+      }
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -120,7 +189,10 @@ export default function VideoCompressor() {
                 Choisir des Fichiers Vidéo
               </h3>
               <p className="text-slate-400 mb-6 text-sm">Ou glissez-déposez vos fichiers ici</p>
-              <button className="bg-brand hover:bg-brand-hover px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-brand/20 text-white">Sélectionner des fichiers</button>
+              <button className="bg-brand hover:bg-brand-hover px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-brand/20 text-white flex items-center justify-center gap-2">
+                {loadingFfmpeg ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
+                {loadingFfmpeg ? 'Initialisation...' : 'Sélectionner des fichiers'}
+              </button>
               <p className="mt-4 text-[10px] text-slate-500 uppercase tracking-widest">Taille max : 2Go • MP4, MOV, AVI, WEBM</p>
             </label>
           </div>
@@ -149,7 +221,7 @@ export default function VideoCompressor() {
                         <button 
                           onClick={(e) => {
                             e.preventDefault();
-                            handleDownload(item.file);
+                            handleDownload(item.compressedFile || item.file);
                           }}
                           className="bg-brand hover:bg-brand-hover text-white text-xs px-4 py-2 rounded-lg font-bold transition-all shadow-md shadow-brand/10"
                         >
@@ -164,10 +236,10 @@ export default function VideoCompressor() {
                         <div className="bg-brand h-2 rounded-full transition-all duration-300" style={{ width: `${item.progress}%` }}></div>
                       </div>
                     )}
-                    {item.done && (
+                    {item.done && item.compressedFile && (
                       <div className="flex items-center justify-between text-[10px] text-green-500 font-bold uppercase tracking-wider">
-                        <span>Réduit à {((item.file.size * 0.4) / (1024 * 1024)).toFixed(1)} Mo</span>
-                        <span>-60%</span>
+                        <span>Réduit à {(item.compressedFile.size / (1024 * 1024)).toFixed(1)} Mo</span>
+                        <span>-{Math.round((1 - item.compressedFile.size / item.file.size) * 100)}%</span>
                       </div>
                     )}
                   </div>
