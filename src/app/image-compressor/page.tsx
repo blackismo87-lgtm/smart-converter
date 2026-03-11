@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { Upload, Image as LucideImage, Check, CheckCircle2 } from 'lucide-react';
 import { insforge } from '@/lib/insforge';
 import Link from 'next/link';
+import { compressImage } from '@/lib/utils';
 
 export default function ImageCompressor() {
   const [isDragging, setIsDragging] = useState(false);
-  const [processingFiles, setProcessingFiles] = useState<{file: File, progress: number, done: boolean}[]>([]);
+  const [processingFiles, setProcessingFiles] = useState<{file: File, compressedFile?: File, progress: number, done: boolean}[]>([]);
   const [files, setFiles] = useState<File[]>([]);
 
   const handleDownload = (file: File) => {
@@ -22,9 +23,9 @@ export default function ImageCompressor() {
   };
 
   const handleDownloadAll = () => {
-    processingFiles.filter(p => p.done).forEach((p, index) => {
+    processingFiles.filter(p => p.done && p.compressedFile).forEach((p, index) => {
       setTimeout(() => {
-        handleDownload(p.file);
+        handleDownload(p.compressedFile || p.file);
       }, index * 200);
     });
   };
@@ -40,26 +41,34 @@ export default function ImageCompressor() {
 
     newEntries.forEach((entry, index) => {
       let currentProgress = 0;
-      const interval = setInterval(() => {
+      const interval = setInterval(async () => {
         currentProgress += Math.floor(Math.random() * 15) + 5;
-        if (currentProgress >= 100) {
-          currentProgress = 100;
+        if (currentProgress >= 90) {
+          // Pause at 90% and run actual compression
           clearInterval(interval);
-          
-          setProcessingFiles(prev => prev.map(p => 
-            p.file === entry.file ? { ...p, progress: 100, done: true } : p
-          ));
+          try {
+            const compressed = await compressImage(entry.file, 0.7);
+            
+            setProcessingFiles(prev => prev.map(p => 
+              p.file === entry.file ? { ...p, compressedFile: compressed, progress: 100, done: true } : p
+            ));
 
-          // Log to InsForge
-          insforge.database.from('processed_files').insert({
-            file_name: entry.file.name,
-            original_size: entry.file.size,
-            compressed_size: Math.floor(entry.file.size * 0.15),
-            file_type: 'image',
-            status: 'completed'
-          }).then(({ error }) => {
-            if (error) console.error('Error logging file:', error);
-          });
+            // Log to InsForge
+            insforge.database.from('processed_files').insert({
+              file_name: entry.file.name,
+              original_size: entry.file.size,
+              compressed_size: compressed.size,
+              file_type: 'image',
+              status: 'completed'
+            }).then(({ error }) => {
+              if (error) console.error('Error logging file:', error);
+            });
+          } catch (error) {
+            console.error('Compression failed:', error);
+            setProcessingFiles(prev => prev.map(p => 
+              p.file === entry.file ? { ...p, progress: 100, done: true } : p
+            ));
+          }
         } else {
           setProcessingFiles(prev => prev.map(p => 
             p.file === entry.file ? { ...p, progress: currentProgress } : p
@@ -160,7 +169,7 @@ export default function ImageCompressor() {
                           <button 
                             onClick={(e) => {
                               e.preventDefault();
-                              handleDownload(item.file);
+                              handleDownload(item.compressedFile || item.file);
                             }}
                             className="text-brand hover:text-brand-hover text-xs font-bold underline flex items-center gap-1"
                           >
@@ -175,8 +184,8 @@ export default function ImageCompressor() {
                           <div className="bg-brand h-1.5 rounded-full transition-all duration-300" style={{ width: `${item.progress}%` }}></div>
                         </div>
                       )}
-                      {item.done && (
-                        <p className="text-[10px] text-green-500 font-medium">Réduit à {((item.file.size * 0.15) / 1024).toFixed(1)} Ko (-85%)</p>
+                      {item.done && item.compressedFile && (
+                        <p className="text-[10px] text-green-500 font-medium">Réduit à {(item.compressedFile.size / 1024).toFixed(1)} Ko (-{Math.round((1 - item.compressedFile.size / item.file.size) * 100)}%)</p>
                       )}
                     </div>
                   ))}
