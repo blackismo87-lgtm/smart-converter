@@ -11,6 +11,17 @@ export default function VideoCompressor() {
   const [progress, setProgress] = useState(0);
   const [processingFiles, setProcessingFiles] = useState<{file: File, progress: number, done: boolean}[]>([]);
 
+  const handleDownload = (file: File) => {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `compressed-${file.name}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleFiles = (newFiles: FileList | null) => {
     if (!newFiles) return;
     
@@ -138,7 +149,7 @@ export default function VideoCompressor() {
                         <button 
                           onClick={(e) => {
                             e.preventDefault();
-                            alert('Téléchargement de ' + item.file.name);
+                            handleDownload(item.file);
                           }}
                           className="bg-brand hover:bg-brand-hover text-white text-xs px-4 py-2 rounded-lg font-bold transition-all shadow-md shadow-brand/10"
                         >

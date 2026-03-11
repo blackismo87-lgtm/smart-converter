@@ -10,6 +10,25 @@ export default function ImageCompressor() {
   const [processingFiles, setProcessingFiles] = useState<{file: File, progress: number, done: boolean}[]>([]);
   const [files, setFiles] = useState<File[]>([]);
 
+  const handleDownload = (file: File) => {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `compressed-${file.name}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadAll = () => {
+    processingFiles.filter(p => p.done).forEach((p, index) => {
+      setTimeout(() => {
+        handleDownload(p.file);
+      }, index * 200);
+    });
+  };
+
   const handleFiles = (newFiles: FileList | null) => {
     if (!newFiles) return;
     
@@ -138,7 +157,13 @@ export default function ImageCompressor() {
                           </div>
                         </div>
                         {item.done ? (
-                          <button className="text-brand hover:text-brand-hover text-xs font-bold underline flex items-center gap-1">
+                          <button 
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleDownload(item.file);
+                            }}
+                            className="text-brand hover:text-brand-hover text-xs font-bold underline flex items-center gap-1"
+                          >
                             Télécharger
                           </button>
                         ) : (
@@ -157,8 +182,11 @@ export default function ImageCompressor() {
                   ))}
                 </div>
                 {processingFiles.every(p => p.done) && (
-                  <button className="w-full py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-2xl transition-all shadow-xl shadow-brand/20 active:scale-95">
-                    Tout télécharger (ZIP)
+                  <button 
+                    onClick={handleDownloadAll}
+                    className="w-full py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-2xl transition-all shadow-xl shadow-brand/20 active:scale-95"
+                  >
+                    Tout télécharger
                   </button>
                 )}
               </div>
