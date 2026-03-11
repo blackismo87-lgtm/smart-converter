@@ -97,8 +97,16 @@ export default function VideoCompressor() {
         
         await ffmpeg.writeFile(inputName, await fetchFile(entry.file));
         
-        // Fast compression: libx264, preset ultrafast, crf 28
-        await ffmpeg.exec(['-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', outputName]);
+        // Fast and strong compression: libx264, preset ultrafast, crf 35, compress audio
+        await ffmpeg.exec([
+          '-i', inputName, 
+          '-c:v', 'libx264', 
+          '-preset', 'ultrafast', 
+          '-crf', '35', 
+          '-c:a', 'aac', 
+          '-b:a', '128k', 
+          outputName
+        ]);
         
         const data = await ffmpeg.readFile(outputName);
         const compressedBlob = new Blob([data as any], { type: 'video/mp4' });
