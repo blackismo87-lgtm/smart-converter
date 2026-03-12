@@ -12,12 +12,14 @@ export default function Navbar() {
             </div>
             <span className="text-xl font-bold tracking-tight">Smart<span className="text-brand">Compress</span></span>
           </Link>
-          <div className="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-300">
-            <Link href="/image-compressor" className="hover:text-brand transition-colors">Images</Link>
-            <Link href="/video-compressor" className="hover:text-brand transition-colors">Vidéos</Link>
+          <div className="hidden md:flex items-center space-x-6 text-sm font-medium text-slate-300">
+            <Link href="/image-compressor" className="hover:text-brand transition-colors">Compresser Image</Link>
+            <Link href="/video-compressor" className="hover:text-brand transition-colors">Compresser Vidéo</Link>
+            <Link href="/image-converter" className="hover:text-brand transition-colors">Convertir Image</Link>
+            <Link href="/video-converter" className="hover:text-brand transition-colors">Convertir Vidéo</Link>
             <Link href="/admin" className="hover:text-brand transition-colors flex items-center gap-1">
               <BarChart2 className="w-4 h-4" />
-              Administration
+              Admin
             </Link>
             <button className="bg-brand hover:bg-brand-hover text-white px-5 py-2 rounded-full transition-all">Se connecter</button>
           </div>
